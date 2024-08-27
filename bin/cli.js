@@ -4,7 +4,6 @@ import chalk from "chalk";
 import figlet from "figlet";
 import gradient from "gradient-string";
 import ora from "ora";
-// import createProject from "../src/commands/create.js";
 import checker from "../src/commands/check.js";
 
 console.clear();
@@ -22,13 +21,22 @@ console.log(
 
 console.log(chalk.dim("\n------------------------------------------------"));
 
+// Get URL from command-line argument
+const url = process.argv[2];
+
+if (url) {
+  console.log(chalk.yellow(`Debug URL: ${url}`));
+} else {
+  console.log(chalk.yellow("No debug URL provided. Running in default mode."));
+}
+
 const spinner = ora({
   text: chalk.yellow("Initializing BlinkScope..."),
   color: "yellow",
 }).start();
 
 try {
-  await checker();
+  await checker(url);
   spinner.succeed(chalk.green("BlinkScope initialized successfully!"));
 } catch (error) {
   spinner.fail(chalk.red("Failed to initialize BlinkScope"));

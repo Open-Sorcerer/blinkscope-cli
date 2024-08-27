@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 import chalk from "chalk";
 import { exec, spawn } from "child_process";
 import ora from "ora";
@@ -7,7 +5,6 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import net from "net";
-import readline from "readline";
 
 const BLINKSCOPE_PATH = path.join(os.homedir(), ".blinkscope");
 const REPO_PATH = path.join(BLINKSCOPE_PATH, "blinks-debugger");
@@ -49,8 +46,44 @@ async function isPortAvailable(port) {
   });
 }
 
-async function getAvailablePort(startPort) {
-  for (let port = startPort; port <= MAX_PORT; port++) {
+async function terminateProcessOnPort(port) {
+  const command =
+    process.platform === "win32"
+      ? `netstat -ano | findstr :${port}`
+      : `lsof -i :${port} -t`;
+
+  try {
+    const output = await execPromise(command);
+    const pid =
+      process.platform === "win32"
+        ? output
+            .split("\n")
+            .find((line) => line.includes("LISTENING"))
+            .split(/\s+/)
+            .pop()
+        : output.trim();
+
+    if (pid) {
+      await execPromise(
+        process.platform === "win32"
+          ? `taskkill /F /PID ${pid}`
+          : `kill -9 ${pid}`
+      );
+      console.log(chalk.yellow(`Terminated process on port ${port}`));
+    }
+  } catch (error) {
+    // No process found on the port, which is fine
+  }
+}
+
+async function getAvailablePort(preferredPort) {
+  await terminateProcessOnPort(preferredPort);
+  if (await isPortAvailable(preferredPort)) {
+    return preferredPort;
+  }
+
+  for (let port = BASE_PORT; port <= MAX_PORT; port++) {
+    await terminateProcessOnPort(port);
     if (await isPortAvailable(port)) {
       return port;
     }
@@ -66,7 +99,7 @@ async function cloneRepository(repo) {
     spinner.succeed(chalk.green("Repository cloned successfully"));
   } catch (error) {
     spinner.fail(chalk.red("Repository cloning failed"));
-    process.exit(1);
+    throw error;
   }
 }
 
@@ -79,24 +112,8 @@ async function updateEnvFile() {
     console.log(chalk.green("Created .env file with default Solana RPC URL"));
   } catch (error) {
     console.log(chalk.red("Failed to create .env file"));
+    throw error;
   }
-}
-
-function askForUrl() {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-
-    rl.question(
-      chalk.yellow("Enter a URL to debug (optional, press Enter to skip): "),
-      (url) => {
-        rl.close();
-        resolve(url.trim());
-      }
-    );
-  });
 }
 
 async function runNpmCommands(url) {
@@ -119,9 +136,10 @@ async function runNpmCommands(url) {
           "Failed to find an available port. Please ensure ports 3000-3010 are not in use."
         )
       );
-      process.exit(1);
+      throw error;
     }
 
+    console.log(chalk.blue(`Using port: ${port}`));
     fs.writeFileSync(PORT_FILE, port.toString());
 
     spinner.start("Starting the development server...");
@@ -177,6 +195,7 @@ async function runNpmCommands(url) {
     process.on("SIGINT", async () => {
       console.log(chalk.yellow("\nTerminating the development server..."));
       devProcess.kill();
+      await terminateProcessOnPort(port);
       process.exit(0);
     });
 
@@ -184,15 +203,11 @@ async function runNpmCommands(url) {
     await new Promise(() => {});
   } catch (error) {
     spinner.fail(chalk.red("Failed to run commands"));
-    process.exit(1);
+    throw error;
   }
 }
 
-export default async function checker() {
-  console.log(chalk.cyan("\nWelcome to BlinkScope!"));
-
-  const url = await askForUrl();
-
+export default async function checker(url) {
   console.log(chalk.cyan("\nSetting up BlinkScope project..."));
 
   const repo = "https://github.com/Open-Sorcerer/blinks-debugger";
@@ -207,6 +222,7 @@ export default async function checker() {
       spinner.succeed(chalk.green("Repository updated successfully"));
     } catch (error) {
       spinner.fail(chalk.red("Failed to update repository"));
+      throw error;
     }
   } else {
     await cloneRepository(repo);
@@ -215,9 +231,3 @@ export default async function checker() {
   await updateEnvFile();
   await runNpmCommands(url);
 }
-
-// Run the main function
-console.log(chalk.cyan("Starting BlinkScope..."));
-checker().catch((error) => {
-  console.log(chalk.red("An unexpected error occurred. Please try again."));
-});
