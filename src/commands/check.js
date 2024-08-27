@@ -77,15 +77,20 @@ async function terminateProcessOnPort(port) {
 }
 
 async function getAvailablePort(preferredPort) {
-  await terminateProcessOnPort(preferredPort);
-  if (await isPortAvailable(preferredPort)) {
-    return preferredPort;
+  let lastPort = BASE_PORT;
+  if (fs.existsSync(PORT_FILE)) {
+    lastPort = parseInt(fs.readFileSync(PORT_FILE, "utf8"));
   }
 
-  for (let port = BASE_PORT; port <= MAX_PORT; port++) {
-    await terminateProcessOnPort(port);
-    if (await isPortAvailable(port)) {
-      return port;
+  // Check if the last used port is still available
+  if (await isPortAvailable(lastPort)) {
+    return lastPort;
+  } else {
+    // If not available, look for another port
+    for (let port = BASE_PORT; port <= MAX_PORT; port++) {
+      if (await isPortAvailable(port)) {
+        return port;
+      }
     }
   }
   throw new Error("No available ports found");
@@ -122,14 +127,9 @@ async function runNpmCommands(url) {
     await execPromise("bun install", { cwd: REPO_PATH });
     spinner.succeed(chalk.green("Dependencies installed successfully"));
 
-    let lastPort = BASE_PORT;
-    if (fs.existsSync(PORT_FILE)) {
-      lastPort = parseInt(fs.readFileSync(PORT_FILE, "utf8"));
-    }
-
     let port;
     try {
-      port = await getAvailablePort(lastPort);
+      port = await getAvailablePort();
     } catch (error) {
       console.log(
         chalk.red(
@@ -171,7 +171,6 @@ async function runNpmCommands(url) {
           );
         }
       }
-      // Suppress most of the output, only show important messages
       if (output.includes("error") || output.includes("Error")) {
         console.log(chalk.red(output));
       }
@@ -191,7 +190,6 @@ async function runNpmCommands(url) {
       }
     });
 
-    // Handle process termination
     process.on("SIGINT", async () => {
       console.log(chalk.yellow("\nTerminating the development server..."));
       devProcess.kill();
@@ -199,7 +197,6 @@ async function runNpmCommands(url) {
       process.exit(0);
     });
 
-    // Keep the main process running
     await new Promise(() => {});
   } catch (error) {
     spinner.fail(chalk.red("Failed to run commands"));

@@ -1,6 +1,6 @@
 {
   "name": "blinkscope",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Your friendly local Solana Blinks debugger",
   "main": "bin/cli.js",
   "bin": {
