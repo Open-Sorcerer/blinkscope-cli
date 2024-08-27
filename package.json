@@ -30,6 +30,7 @@
     "figlet": "^1.7.0",
     "gradient-string": "^2.0.2",
     "inquirer": "^10.0.1",
+    "net": "^1.0.2",
     "ora": "^8.0.1"
   }
 }

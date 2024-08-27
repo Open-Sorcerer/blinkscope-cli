@@ -1,12 +1,19 @@
+#!/usr/bin/env node
+
 import chalk from "chalk";
 import { exec, spawn } from "child_process";
 import ora from "ora";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import net from "net";
 
 const BLINKSCOPE_PATH = path.join(os.homedir(), ".blinkscope");
 const REPO_PATH = path.join(BLINKSCOPE_PATH, "blinks-debugger");
+const PORT_FILE = path.join(BLINKSCOPE_PATH, "last_port.txt");
+const BASE_PORT = 3000;
+const MAX_PORT = 3010;
+const BLINKSCOPE_SIGNATURE = "BLINKSCOPE_DEBUGGER_INSTANCE";
 
 function execPromise(command, options = {}) {
   return new Promise((resolve, reject) => {
@@ -24,6 +31,30 @@ async function ensureDirectoryExists(dirPath) {
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true });
   }
+}
+
+async function isPortAvailable(port) {
+  return new Promise((resolve) => {
+    const server = net
+      .createServer()
+      .once("error", () => {
+        resolve(false);
+      })
+      .once("listening", () => {
+        server.close();
+        resolve(true);
+      })
+      .listen(port);
+  });
+}
+
+async function getAvailablePort(startPort) {
+  for (let port = startPort; port <= MAX_PORT; port++) {
+    if (await isPortAvailable(port)) {
+      return port;
+    }
+  }
+  throw new Error("No available ports found");
 }
 
 async function cloneRepository(repo) {
@@ -58,24 +89,50 @@ async function runNpmCommands() {
     await execPromise("bun install", { cwd: REPO_PATH });
     spinner.succeed(chalk.green("Dependencies installed successfully"));
 
+    let lastPort = BASE_PORT;
+    if (fs.existsSync(PORT_FILE)) {
+      lastPort = parseInt(fs.readFileSync(PORT_FILE, "utf8"));
+    }
+
+    let port;
+    try {
+      port = await getAvailablePort(lastPort);
+    } catch (error) {
+      console.error(
+        chalk.red(
+          "Failed to find an available port. Please ensure ports 3000-3010 are not in use."
+        )
+      );
+      process.exit(1);
+    }
+
+    fs.writeFileSync(PORT_FILE, port.toString());
+
     spinner.start("Starting the development server...");
-    const devProcess = spawn("bun", ["run", "dev"], {
+    const devProcess = spawn("bun", ["run", "dev", "--port", port.toString()], {
       cwd: REPO_PATH,
       stdio: "pipe",
+      env: { ...process.env, [BLINKSCOPE_SIGNATURE]: "true" },
     });
+
+    let serverUrl = null;
 
     devProcess.stdout.on("data", (data) => {
       const output = data.toString();
-      if (output.includes("ready")) {
-        spinner.succeed(chalk.green("Development server started"));
-        console.log(chalk.cyan("\nYour BlinkScope server is now running!"));
-        console.log(
-          chalk.cyan("Open your browser and navigate to: ") +
-            chalk.green("http://localhost:3000")
-        );
-        console.log(
-          chalk.yellow("\nPress Ctrl+C to stop the server and exit.")
-        );
+      if (output.includes("- Local:")) {
+        const match = output.match(/- Local:\s+(http:\/\/localhost:\d+)/);
+        if (match) {
+          serverUrl = match[1];
+          spinner.succeed(chalk.green("Development server started"));
+          console.log(chalk.cyan("\nYour BlinkScope server is now running!"));
+          console.log(
+            chalk.cyan("Open your browser and navigate to: ") +
+              chalk.green(serverUrl)
+          );
+          console.log(
+            chalk.yellow("\nPress Ctrl+C to stop the server and exit.")
+          );
+        }
       }
       process.stdout.write(output);
     });
@@ -92,6 +149,13 @@ async function runNpmCommands() {
       }
     });
 
+    // Handle process termination
+    process.on("SIGINT", async () => {
+      console.log(chalk.yellow("\nTerminating the development server..."));
+      devProcess.kill();
+      process.exit(0);
+    });
+
     // Keep the main process running
     await new Promise(() => {});
   } catch (error) {
@@ -103,6 +167,7 @@ async function runNpmCommands() {
 
 export default async function checker() {
   console.log(chalk.cyan("\nSetting up BlinkScope project..."));
+  console.log(chalk.gray(`Using signature: ${BLINKSCOPE_SIGNATURE}`));
 
   const repo = "https://github.com/Open-Sorcerer/blinks-debugger";
 
@@ -113,20 +178,6 @@ export default async function checker() {
     const spinner = ora("Pulling latest changes...").start();
     try {
       await execPromise("git pull", { cwd: REPO_PATH });
-
-      // show the last commit
-      const lastCommit = await execPromise("git log -1 --pretty=%B", {
-        cwd: REPO_PATH,
-      });
-      console.log(
-        chalk.cyan(
-          `\nLast commit: ${lastCommit
-            .split("\n")
-            .filter((line) => line.trim().length > 0)
-            .join("\n")}`
-        )
-      );
-
       spinner.succeed(chalk.green("Repository updated successfully"));
     } catch (error) {
       spinner.fail(chalk.red("Failed to update repository"));
@@ -138,24 +189,11 @@ export default async function checker() {
 
   await updateEnvFile();
   await runNpmCommands();
-
-  // The following lines won't be reached as the script will keep running with the dev server
-  console.log(chalk.cyan("\nBlinkScope project is now set up and running!"));
-  console.log(chalk.cyan("Happy debugging with BlinkScope! 🔍✨"));
-  console.log(
-    chalk.yellow(
-      "\nNote: A default Solana RPC URL (https://api.mainnet-beta.solana.com) has been set in the .env file."
-    )
-  );
-  console.log(
-    chalk.yellow(
-      `If you need to use a different RPC URL, please update it in ${path.join(
-        REPO_PATH,
-        ".env"
-      )}`
-    )
-  );
-  console.log(
-    chalk.cyan(`\nYou can find the BlinkScope project at: ${REPO_PATH}`)
-  );
 }
+
+// Run the main function
+checker().catch((error) => {
+  console.error(chalk.red("An error occurred:"));
+  console.error(chalk.redBright(error));
+  process.exit(1);
+});
