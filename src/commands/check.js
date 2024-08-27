@@ -7,6 +7,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import net from "net";
+import readline from "readline";
 
 const BLINKSCOPE_PATH = path.join(os.homedir(), ".blinkscope");
 const REPO_PATH = path.join(BLINKSCOPE_PATH, "blinks-debugger");
@@ -65,7 +66,6 @@ async function cloneRepository(repo) {
     spinner.succeed(chalk.green("Repository cloned successfully"));
   } catch (error) {
     spinner.fail(chalk.red("Repository cloning failed"));
-    console.error(chalk.redBright(error));
     process.exit(1);
   }
 }
@@ -78,12 +78,28 @@ async function updateEnvFile() {
     fs.writeFileSync(envPath, envContent);
     console.log(chalk.green("Created .env file with default Solana RPC URL"));
   } catch (error) {
-    console.error(chalk.red("Failed to create .env file"));
-    console.error(chalk.redBright(error));
+    console.log(chalk.red("Failed to create .env file"));
   }
 }
 
-async function runNpmCommands() {
+function askForUrl() {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+
+    rl.question(
+      chalk.yellow("Enter a URL to debug (optional, press Enter to skip): "),
+      (url) => {
+        rl.close();
+        resolve(url.trim());
+      }
+    );
+  });
+}
+
+async function runNpmCommands(url) {
   const spinner = ora("Installing dependencies...").start();
   try {
     await execPromise("bun install", { cwd: REPO_PATH });
@@ -98,7 +114,7 @@ async function runNpmCommands() {
     try {
       port = await getAvailablePort(lastPort);
     } catch (error) {
-      console.error(
+      console.log(
         chalk.red(
           "Failed to find an available port. Please ensure ports 3000-3010 are not in use."
         )
@@ -123,6 +139,9 @@ async function runNpmCommands() {
         const match = output.match(/- Local:\s+(http:\/\/localhost:\d+)/);
         if (match) {
           serverUrl = match[1];
+          if (url) {
+            serverUrl += `/?url=${encodeURIComponent(url)}`;
+          }
           spinner.succeed(chalk.green("Development server started"));
           console.log(chalk.cyan("\nYour BlinkScope server is now running!"));
           console.log(
@@ -134,17 +153,22 @@ async function runNpmCommands() {
           );
         }
       }
-      process.stdout.write(output);
+      // Suppress most of the output, only show important messages
+      if (output.includes("error") || output.includes("Error")) {
+        console.log(chalk.red(output));
+      }
     });
 
     devProcess.stderr.on("data", (data) => {
-      process.stderr.write(data);
+      // Suppress stderr output
     });
 
     devProcess.on("close", (code) => {
       if (code !== 0) {
         console.log(
-          chalk.red(`Development server process exited with code ${code}`)
+          chalk.red(
+            `Development server process exited unexpectedly. Please try again.`
+          )
         );
       }
     });
@@ -160,14 +184,16 @@ async function runNpmCommands() {
     await new Promise(() => {});
   } catch (error) {
     spinner.fail(chalk.red("Failed to run commands"));
-    console.error(chalk.redBright(error));
     process.exit(1);
   }
 }
 
 export default async function checker() {
+  console.log(chalk.cyan("\nWelcome to BlinkScope!"));
+
+  const url = await askForUrl();
+
   console.log(chalk.cyan("\nSetting up BlinkScope project..."));
-  console.log(chalk.gray(`Using signature: ${BLINKSCOPE_SIGNATURE}`));
 
   const repo = "https://github.com/Open-Sorcerer/blinks-debugger";
 
@@ -181,19 +207,17 @@ export default async function checker() {
       spinner.succeed(chalk.green("Repository updated successfully"));
     } catch (error) {
       spinner.fail(chalk.red("Failed to update repository"));
-      console.error(chalk.redBright(error));
     }
   } else {
     await cloneRepository(repo);
   }
 
   await updateEnvFile();
-  await runNpmCommands();
+  await runNpmCommands(url);
 }
 
 // Run the main function
+console.log(chalk.cyan("Starting BlinkScope..."));
 checker().catch((error) => {
-  console.error(chalk.red("An error occurred:"));
-  console.error(chalk.redBright(error));
-  process.exit(1);
+  console.log(chalk.red("An unexpected error occurred. Please try again."));
 });
