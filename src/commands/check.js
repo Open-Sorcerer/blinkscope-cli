@@ -108,6 +108,35 @@ async function cloneRepository(repo) {
   }
 }
 
+async function updateRepository() {
+  const spinner = ora("Updating repository...").start();
+  try {
+    // Add the directory to safe.directory
+    await execPromise(`git config --global --add safe.directory ${REPO_PATH}`);
+
+    // Now attempt to pull
+    await execPromise("git pull", { cwd: REPO_PATH });
+    spinner.succeed(chalk.green("Repository updated successfully"));
+
+    // console the last commit and the commit hash
+
+    const lastCommit = await execPromise("git log -1 --pretty=%B", {
+      cwd: REPO_PATH,
+    });
+
+    const commitHash = await execPromise("git rev-parse HEAD", {
+      cwd: REPO_PATH,
+    });
+
+    console.log(chalk.blue(`Last commit: ${lastCommit}`));
+    console.log(chalk.blue(`Commit hash: ${commitHash}`));
+  } catch (error) {
+    spinner.fail(chalk.red("Failed to update repository"));
+    console.log(chalk.yellow("Attempting to re-clone the repository..."));
+    await cloneRepository("https://github.com/Open-Sorcerer/blinks-debugger");
+  }
+}
+
 async function updateEnvFile() {
   const envPath = path.join(REPO_PATH, ".env");
   const envContent = `NEXT_PUBLIC_RPC=https://api.mainnet-beta.solana.com\n`;
@@ -213,14 +242,7 @@ export default async function checker(url) {
     console.log(
       chalk.yellow("BlinkScope repository already exists. Updating...")
     );
-    const spinner = ora("Pulling latest changes...").start();
-    try {
-      await execPromise("git pull", { cwd: REPO_PATH });
-      spinner.succeed(chalk.green("Repository updated successfully"));
-    } catch (error) {
-      spinner.fail(chalk.red("Failed to update repository"));
-      throw error;
-    }
+    await updateRepository();
   } else {
     await cloneRepository(repo);
   }

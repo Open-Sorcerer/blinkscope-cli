@@ -41,6 +41,11 @@ try {
 } catch (error) {
   spinner.fail(chalk.red("Failed to initialize BlinkScope"));
   console.error(chalk.red("Error:"), error.message);
+  console.log(
+    chalk.yellow(
+      "Please try running the command again. If the problem persists, you may need to manually delete the ~/.blinkscope directory and try again."
+    )
+  );
   process.exit(1);
 }
 
